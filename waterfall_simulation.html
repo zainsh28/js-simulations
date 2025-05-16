@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Interactive 2D Waterfall Simulation</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "p5":        "https://cdn.skypack.dev/p5@1.4.0",
+      "matter-js": "https://cdn.skypack.dev/matter-js@0.18.0"
+    }
+  }
+  </script>
+</head>
+<body>
+  <script type="module">
+    import P5 from 'p5';
+    import Matter from 'matter-js';
+
+    /**
+     * Main p5 sketch function.
+     * @param {P5} p5Canvas - The p5 instance.
+     */
+    const sketch = (p5Canvas) => {
+      // Physics engine and world
+      let physicsEngine;
+      let physicsWorld;
+
+      // Collections for static rocks and dynamic water particles
+      const rockBodies = [];
+      const waterDrops = [];
+      const splashDrops = [];
+
+      // UI controls and state
+      let waterFlowRate = 10;
+      let flowRateSlider;
+      let currentlyDraggedRock = null;
+
+      /**
+       * Initialize the Matter.js physics engine and world.
+       */
+      function initializePhysicsScene() {
+        physicsEngine = Matter.Engine.create();
+        physicsWorld = physicsEngine.world;
+      }
+
+      /**
+       * Create static rock bodies at fixed coordinates.
+       */
+      function loadRockBodies() {
+        const predefinedPositions = [
+          { x: 200, y: 450 },
+          { x: 400, y: 400 },
+          { x: 600, y: 500 },
+          { x: 300, y: 350 },
+          { x: 500, y: 300 },
+        ];
+
+        predefinedPositions.forEach(position => {
+          const vertexCount = p5Canvas.floor(p5Canvas.random(5, 9));
+          const rockSize = p5Canvas.random(30, 60);
+          const rockBody = Matter.Bodies.polygon(
+            position.x,
+            position.y,
+            vertexCount,
+            rockSize,
+            { isStatic: true }
+          );
+          Matter.World.add(physicsWorld, rockBody);
+          rockBodies.push(rockBody);
+        });
+      }
+
+      /**
+       * Emit new water drops at the top center of the canvas.
+       */
+      function emitWaterDrops() {
+        for (let emissionIndex = 0; emissionIndex < waterFlowRate; emissionIndex++) {
+          const dropRadius = p5Canvas.random(2, 4);
+          const initialX = p5Canvas.width / 2 + p5Canvas.random(-10, 10);
+          waterDrops.push(new WaterParticle(initialX, 0, dropRadius));
+        }
+      }
+
+      /**
+       * Represents a single water particle.
+       */
+      class WaterParticle {
+        /**
+         * @param {number} x - Initial x position.
+         * @param {number} y - Initial y position.
+         * @param {number} radius - Particle radius.
+         */
+        constructor(x, y, radius) {
+          this.x = x;
+          this.y = y;
+          this.radius = radius;
+          this.velocityX = p5Canvas.random(-1, 1);
+          this.velocityY = p5Canvas.random(0, 2);
+        }
+
+        /**
+         * Update particle position and velocity.
+         */
+        updatePosition() {
+          this.velocityY += 0.1; // gravity effect
+          this.x += this.velocityX;
+          this.y += this.velocityY;
+        }
+
+        /**
+         * Draw the particle.
+         */
+        draw() {
+          p5Canvas.noStroke();
+          p5Canvas.fill(0, 0, 255, 150);
+          p5Canvas.ellipse(this.x, this.y, this.radius * 2);
+        }
+
+        /**
+         * Check if particle moved off-screen.
+         * @returns {boolean}
+         */
+        isOffScreen() {
+          return (
+            this.y > p5Canvas.height ||
+            this.x < 0 ||
+            this.x > p5Canvas.width
+          );
+        }
+
+        /**
+         * Check collision with a Matter.js body.
+         * @param {Matter.Body} body
+         * @returns {boolean}
+         */
+        collidesWithBody(body) {
+          return (
+            Matter.Query.point([body], { x: this.x, y: this.y }).length > 0
+          );
+        }
+      }
+
+      /**
+       * Update and remove off-screen water and splash particles.
+       */
+      function updateParticleCollections() {
+        for (let dropIndex = waterDrops.length - 1; dropIndex >= 0; dropIndex--) {
+          const waterParticle = waterDrops[dropIndex];
+          waterParticle.updatePosition();
+          if (waterParticle.isOffScreen()) {
+            waterDrops.splice(dropIndex, 1);
+          }
+        }
+
+        for (let splashIndex = splashDrops.length - 1; splashIndex >= 0; splashIndex--) {
+          const splashParticle = splashDrops[splashIndex];
+          splashParticle.updatePosition();
+          if (splashParticle.isOffScreen()) {
+            splashDrops.splice(splashIndex, 1);
+          }
+        }
+      }
+
+      /**
+       * Detect collisions between water drops and rock bodies,
+       * convert impacts into splash particles.
+       */
+      function handleParticleCollisions() {
+        const splashParticleCount = 5;
+
+        for (let dropIndex = waterDrops.length - 1; dropIndex >= 0; dropIndex--) {
+          const waterParticle = waterDrops[dropIndex];
+          for (const rockBody of rockBodies) {
+            if (waterParticle.collidesWithBody(rockBody)) {
+              for (let splashCount = 0; splashCount < splashParticleCount; splashCount++) {
+                const splashParticle = new WaterParticle(
+                  waterParticle.x,
+                  waterParticle.y,
+                  p5Canvas.random(1, 3)
+                );
+                splashParticle.velocityX = p5Canvas.random(-2, 2);
+                splashParticle.velocityY = p5Canvas.random(-2, 0);
+                splashDrops.push(splashParticle);
+              }
+              waterDrops.splice(dropIndex, 1);
+              break;
+            }
+          }
+        }
+      }
+
+      /**
+       * Render splash particles.
+       */
+      function renderSplashParticles() {
+        splashDrops.forEach(particle => particle.draw());
+      }
+
+      /**
+       * Render static rock bodies.
+       */
+      function renderRockBodies() {
+        p5Canvas.fill(100);
+        rockBodies.forEach(body => {
+          p5Canvas.beginShape();
+          body.vertices.forEach(vertex => p5Canvas.vertex(vertex.x, vertex.y));
+          p5Canvas.endShape(p5Canvas.CLOSE);
+        });
+      }
+
+      /**
+       * Set up UI controls: slider for flow rate and drag-and-drop rocks.
+       */
+      function initializeControls() {
+        flowRateSlider = p5Canvas.createSlider(1, 50, waterFlowRate);
+        flowRateSlider.position(10, 10);
+        flowRateSlider.input(() => {
+          waterFlowRate = flowRateSlider.value();
+        });
+
+        p5Canvas.mousePressed = () => {
+          for (const rockBody of rockBodies) {
+            const distanceToRock = p5Canvas.dist(
+              p5Canvas.mouseX,
+              p5Canvas.mouseY,
+              rockBody.position.x,
+              rockBody.position.y
+            );
+            if (distanceToRock < 60) {
+              currentlyDraggedRock = rockBody;
+              break;
+            }
+          }
+        };
+
+        p5Canvas.mouseDragged = () => {
+          if (currentlyDraggedRock) {
+            Matter.Body.setPosition(currentlyDraggedRock, {
+              x: p5Canvas.mouseX,
+              y: p5Canvas.mouseY
+            });
+          }
+        };
+
+        p5Canvas.mouseReleased = () => {
+          currentlyDraggedRock = null;
+        };
+      }
+
+      /**
+       * Main animation loop: update physics, particles, and draw all elements.
+       */
+      function mainAnimationLoop() {
+        p5Canvas.background(220);
+        emitWaterDrops();
+        updateParticleCollections();
+        handleParticleCollisions();
+        renderRockBodies();
+        waterDrops.forEach(drop => drop.draw());
+        renderSplashParticles();
+
+        Matter.Engine.update(physicsEngine);
+        requestAnimationFrame(mainAnimationLoop);
+      }
+
+      // p5.js setup function
+      p5Canvas.setup = () => {
+        p5Canvas.createCanvas(800, 600);
+        initializePhysicsScene();
+        loadRockBodies();
+        initializeControls();
+        mainAnimationLoop();
+      };
+    };
+
+    // Initialize the sketch
+    new P5(sketch);
+  </script>
+</body>
+</html>
