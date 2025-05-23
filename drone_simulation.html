@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quadcopter Landing Simulation</title>
+  <!--
+    Styles for full-screen canvas and UI controls
+  -->
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #87ceeb; /* Sky blue background */
+      font-family: sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    /* Button styling */
+    #startBtn, #stopBtn, #resetBtn {
+      position: absolute;
+      top: 10px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      z-index: 10;
+    }
+    #startBtn { left: 10px; }
+    #stopBtn  { left: 90px; }
+    #resetBtn { left: 170px; }
+
+    /* Slider positioning */
+    #windSlider, #tiltSlider {
+      position: absolute;
+      width: 160px;
+      z-index: 10;
+    }
+    #windSlider { top: 50px;  left: 60px; }
+    #tiltSlider{ top: 90px;  left: 140px; }
+
+    /* Label styling */
+    .label {
+      position: absolute;
+      z-index: 10;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 2px 6px;
+      font-size: 14px;
+      border-radius: 4px;
+    }
+    #windLabel  { top: 50px;  left: 10px; }
+    #windValue  { top: 50px;  left: 230px; }
+    #tiltLabel  { top: 90px;  left: 10px; }
+    #tiltValue  { top: 90px;  left: 310px; }
+  </style>
+
+  <!-- Import map to load dependencies via Skypack -->
+  <script type="importmap">
+  {
+    "imports": {
+      "p5":       "https://cdn.skypack.dev/p5@1.4.0",
+      "matter-js": "https://cdn.skypack.dev/matter-js@0.18.0"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Control buttons -->
+  <button id="startBtn">Start</button>
+  <button id="stopBtn">Stop</button>
+  <button id="resetBtn">Restart</button>
+
+  <!-- Wind control -->
+  <span id="windLabel" class="label">Wind:</span>
+  <input type="range" id="windSlider" min="0" max="20" step="1" value="0">
+  <span id="windValue" class="label">0</span>
+
+  <!-- Platform tilt control -->
+  <span id="tiltLabel" class="label">Platform Tilt:</span>
+  <input type="range" id="tiltSlider" min="-30" max="30" step="1" value="0">
+  <span id="tiltValue" class="label">0°</span>
+
+  <!-- Main simulation script -->
+  <script type="module">
+    import p5 from 'p5';
+    import Matter from 'matter-js';
+
+    const { Engine, World, Bodies, Body } = Matter;
+
+    // ----- Simulation Constants -----
+    const DRONE_WIDTH  = 40;
+    const DRONE_HEIGHT = 10;
+    const PLATFORM_WIDTH  = 100;
+    const PLATFORM_HEIGHT = 10;
+
+    // Guidance velocity gains and speed limits
+    const KV_HORIZ = 0.1;
+    const KV_VERT  = 0.1;
+    const MAX_SPEED_X = 3;
+    const MAX_SPEED_Y = 3;
+
+    // Platform horizontal oscillation period (seconds)
+    const PLATFORM_OSC_PERIOD = 8;
+
+    // Physics engine and bodies
+    let engine, world;
+    let drone, platform;
+
+    // Simulation state
+    let hasLanded       = false;
+    let simulationRunning = true;
+    let windForce        = 0;
+    let platformAngle    = 0;
+    let timeElapsed      = 0;
+
+    // Graphics buffer for static background
+    let backgroundGraphics;
+    let skyTopColor, skyBottomColor;
+
+    /**
+     * Initialize or reset the simulation state and physics world.
+     * @param {object} p - p5 instance reference
+     */
+    function initSimulation(p) {
+      // Create physics engine
+      engine = Engine.create();
+      world  = engine.world;
+
+      // Set subtle gravity
+      world.gravity.y     = 1;
+      world.gravity.x     = 0;
+      world.gravity.scale = 0.001;
+
+      // Clear previous bodies if any
+      World.clear(world, false);
+
+      // Create dynamic drone and static platform bodies
+      drone = Bodies.rectangle(
+        p.width / 2,
+        100,
+        DRONE_WIDTH,
+        DRONE_HEIGHT,
+        { frictionAir: 0.05, density: 0.001, restitution: 0, friction: 0.1 }
+      );
+
+      platform = Bodies.rectangle(
+        p.width / 2,
+        p.height * 0.8,
+        PLATFORM_WIDTH,
+        PLATFORM_HEIGHT,
+        { isStatic: true, friction: 0.8, restitution: 0.1 }
+      );
+
+      World.add(world, [drone, platform]);
+
+      // Reset state variables
+      hasLanded        = false;
+      simulationRunning = true;
+      timeElapsed      = 0;
+    }
+
+    /**
+     * Draw the sky gradient and simple skyline once.
+     * @param {object} bg - p5 graphics buffer
+     * @param {object} p  - p5 instance reference
+     */
+    function drawBackground(bg, p) {
+      // Vertical gradient
+      for (let y = 0; y < p.height; y++) {
+        const t = y / p.height;
+        bg.stroke(p.lerpColor(skyTopColor, skyBottomColor, t));
+        bg.line(0, y, p.width, y);
+      }
+
+      // Simple skyline at bottom
+      bg.noStroke();
+      bg.fill(30);
+      let x = 0;
+      while (x < p.width) {
+        const w = 20 + Math.random() * 80;
+        const h = 50 + Math.random() * (p.height * 0.3);
+        bg.rect(x + w / 2, p.height - h / 2, w, h);
+        x += w + Math.random() * 20;
+      }
+    }
+
+    /**
+     * Render the platform body.
+     * @param {object} p - p5 instance reference
+     */
+    function renderPlatform(p) {
+      p.push();
+      p.translate(platform.position.x, platform.position.y);
+      p.rotate(platformAngle);
+      p.fill(80);
+      p.noStroke();
+      p.rect(0, 0, PLATFORM_WIDTH, PLATFORM_HEIGHT);
+      
+      // Platform wheels
+      p.fill(50);
+      const wheelOffset = PLATFORM_WIDTH * 0.3;
+      p.ellipse(-wheelOffset, PLATFORM_HEIGHT / 2, 15, 15);
+      p.ellipse( wheelOffset, PLATFORM_HEIGHT / 2, 15, 15);
+      p.pop();
+    }
+
+    /**
+     * Render the drone body.
+     * @param {object} p - p5 instance reference
+     */
+    function renderDrone(p) {
+      p.push();
+      p.translate(drone.position.x, drone.position.y);
+      p.rotate(drone.angle);
+      p.fill(255, 204, 0);
+      p.noStroke();
+      p.rect(0, 0, DRONE_WIDTH, DRONE_HEIGHT);
+
+      // Drone rotors
+      p.fill(0);
+      const rotorOffset = DRONE_WIDTH / 2;
+      p.ellipse(-rotorOffset, 0, 8, 8);
+      p.ellipse( rotorOffset, 0, 8, 8);
+      p.pop();
+    }
+
+    /**
+     * Main p5 sketch function
+     */
+    const sketch = p => {
+      p.setup = () => {
+        p.createCanvas(p.windowWidth, p.windowHeight);
+        p.rectMode(p.CENTER);
+        p.angleMode(p.RADIANS);
+
+        // Initialize simulation and background
+        initSimulation(p);
+        skyTopColor    = p.color(135, 206, 235);
+        skyBottomColor = p.color(250, 222, 156);
+        backgroundGraphics = p.createGraphics(p.width, p.height);
+        drawBackground(backgroundGraphics, p);
+      };
+
+      p.windowResized = () => {
+        p.resizeCanvas(p.windowWidth, p.windowHeight);
+        backgroundGraphics = p.createGraphics(p.width, p.height);
+        drawBackground(backgroundGraphics, p);
+
+        // Re-center platform on resize
+        Body.setPosition(platform, { x: p.width / 2, y: platform.position.y });
+      };
+
+      p.draw = () => {
+        // Update physics if running
+        if (simulationRunning) {
+          Engine.update(engine, p.deltaTime);
+        }
+
+        // Oscillate platform horizontally and apply tilt
+        timeElapsed += p.deltaTime / 1000;
+        const omega = (2 * Math.PI) / PLATFORM_OSC_PERIOD;
+        const baseX = p.width / 2;
+        const amplitude = p.width / 3;
+        Body.setPosition(platform, {
+          x: baseX + amplitude * Math.sin(omega * timeElapsed),
+          y: platform.position.y
+        });
+        Body.setAngle(platform, platformAngle);
+
+        // Desired landing Y-coordinate
+        const landingY = platform.position.y - (PLATFORM_HEIGHT / 2 + DRONE_HEIGHT / 2);
+
+        if (!hasLanded && simulationRunning) {
+          // Compute position errors
+          const errorX = platform.position.x - drone.position.x;
+          const errorY = landingY - drone.position.y;
+
+          // Proportional velocity commands
+          let vx = KV_HORIZ * errorX + windForce;
+          let vy = KV_VERT  * errorY;
+
+          // Clamp speeds
+          vx = Math.sign(vx) * Math.min(MAX_SPEED_X, Math.abs(vx));
+          vy = Math.sign(vy) * Math.min(MAX_SPEED_Y, Math.abs(vy));
+          Body.setVelocity(drone, { x: vx, y: vy });
+
+          // Check for touchdown within thresholds
+          const threshX = (PLATFORM_WIDTH - DRONE_WIDTH) / 2;
+          const threshY = 2;
+          if (Math.abs(errorX) <= threshX && Math.abs(errorY) <= threshY) {
+            hasLanded = true;
+            Body.setStatic(drone, true);
+            Body.setPosition(drone, { x: platform.position.x, y: landingY });
+            Body.setAngle(drone, platformAngle);
+          }
+        } else if (hasLanded) {
+          // Lock drone position on landed platform
+          Body.setPosition(drone, { x: platform.position.x, y: landingY });
+          Body.setAngle(drone, platformAngle);
+        }
+
+        // Render scene
+        p.image(backgroundGraphics, 0, 0);
+        renderPlatform(p);
+        renderDrone(p);
+      };
+    };
+
+    // Initialize p5 instance
+    const p5Instance = new p5(sketch);
+
+    // ----- UI Controls -----
+    const startBtn   = document.getElementById('startBtn');
+    const stopBtn    = document.getElementById('stopBtn');
+    const resetBtn   = document.getElementById('resetBtn');
+    const windSlider = document.getElementById('windSlider');
+    const tiltSlider = document.getElementById('tiltSlider');
+    const windValue  = document.getElementById('windValue');
+    const tiltValue  = document.getElementById('tiltValue');
+
+    startBtn.addEventListener('click', () => simulationRunning = true);
+    stopBtn.addEventListener ('click', () => simulationRunning = false);
+    resetBtn.addEventListener('click', () => {
+      initSimulation(p5Instance);
+      windSlider.value = 0;
+      tiltSlider.value = 0;
+      windForce        = 0;
+      platformAngle    = 0;
+      windValue.textContent = '0';
+      tiltValue.textContent = '0°';
+    });
+
+    windSlider.addEventListener('input', event => {
+      const value = Number(event.target.value);
+      windForce = value * 0.00002;
+      windValue.textContent = value;
+    });
+
+    tiltSlider.addEventListener('input', event => {
+      const deg = Number(event.target.value);
+      platformAngle = (deg * Math.PI) / 180;
+      tiltValue.textContent = `${deg}°`;
+    });
+  </script>
+</body>
+</html>
