@@ -1,56 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quadcopter Landing Simulation</title>
-  <!--
-    Styles for full-screen canvas and UI controls
-  -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Controllable Quadcopter Landing on Moving Truck</title>
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: #87ceeb; /* Sky blue background */
-      font-family: sans-serif;
+      margin: 0; padding: 0; overflow: hidden;
+      background: #87ceeb; font-family: sans-serif;
     }
-
-    canvas {
-      display: block;
-    }
-
-    /* Button styling */
-    #startBtn, #stopBtn, #resetBtn {
-      position: absolute;
-      top: 10px;
-      padding: 6px 12px;
-      font-size: 14px;
-      cursor: pointer;
-      z-index: 10;
+    canvas { display: block; }
+    button {
+      position: absolute; top: 10px;
+      padding: 6px 12px; font-size: 14px;
+      cursor: pointer; z-index: 20;
     }
     #startBtn { left: 10px; }
     #stopBtn  { left: 90px; }
     #resetBtn { left: 170px; }
 
-    /* Slider positioning */
-    #windSlider, #tiltSlider {
-      position: absolute;
-      width: 160px;
-      z-index: 10;
+    input[type=range] {
+      position: absolute; width: 160px; z-index: 20;
     }
     #windSlider { top: 50px;  left: 60px; }
     #tiltSlider{ top: 90px;  left: 140px; }
 
-    /* Label styling */
     .label {
-      position: absolute;
-      z-index: 10;
-      color: #fff;
-      background: rgba(0, 0, 0, 0.5);
-      padding: 2px 6px;
-      font-size: 14px;
-      border-radius: 4px;
+      position: absolute; z-index: 20;
+      color: #fff; background: rgba(0,0,0,0.5);
+      padding: 2px 6px; font-size: 14px; border-radius: 4px;
     }
     #windLabel  { top: 50px;  left: 10px; }
     #windValue  { top: 50px;  left: 230px; }
@@ -58,292 +36,330 @@
     #tiltValue  { top: 90px;  left: 310px; }
   </style>
 
-  <!-- Import map to load dependencies via Skypack -->
   <script type="importmap">
   {
     "imports": {
-      "p5":       "https://cdn.skypack.dev/p5@1.4.0",
+      "p5":        "https://cdn.skypack.dev/p5@1.4.0",
       "matter-js": "https://cdn.skypack.dev/matter-js@0.18.0"
     }
   }
   </script>
 </head>
 <body>
-  <!-- Control buttons -->
   <button id="startBtn">Start</button>
   <button id="stopBtn">Stop</button>
   <button id="resetBtn">Restart</button>
 
-  <!-- Wind control -->
   <span id="windLabel" class="label">Wind:</span>
   <input type="range" id="windSlider" min="0" max="20" step="1" value="0">
   <span id="windValue" class="label">0</span>
 
-  <!-- Platform tilt control -->
   <span id="tiltLabel" class="label">Platform Tilt:</span>
   <input type="range" id="tiltSlider" min="-30" max="30" step="1" value="0">
   <span id="tiltValue" class="label">0°</span>
 
-  <!-- Main simulation script -->
   <script type="module">
     import p5 from 'p5';
     import Matter from 'matter-js';
-
     const { Engine, World, Bodies, Body } = Matter;
 
-    // ----- Simulation Constants -----
-    const DRONE_WIDTH  = 40;
-    const DRONE_HEIGHT = 10;
-    const PLATFORM_WIDTH  = 100;
-    const PLATFORM_HEIGHT = 10;
+    // ----- Constants -----
+    const DRONE_WIDTH          = 40;
+    const DRONE_HEIGHT         = 10;
+    const PLATFORM_WIDTH       = 100;
+    const PLATFORM_HEIGHT      = 10;
+    const ROAD_HEIGHT          = 40;
+    const WHEEL_DIAMETER       = 20;
+    const TRUCK_X_FRACTION     = 0.3;
+    const DASH_LENGTH          = 40;
+    const DASH_GAP             = 30;
+    const ROAD_SCROLL_SPEED    = 200;
 
-    // Guidance velocity gains and speed limits
-    const KV_HORIZ = 0.1;
-    const KV_VERT  = 0.1;
-    const MAX_SPEED_X = 3;
-    const MAX_SPEED_Y = 3;
+    const USER_THRUST          = 0.0005;
+    const DRAG_COEFFICIENT     = 0.00002;
+    const LANDING_GAP          = 5;
 
-    // Platform horizontal oscillation period (seconds)
-    const PLATFORM_OSC_PERIOD = 8;
+    // ----- State -----
+    let physicsEngine, physicsWorld;
+    let droneBody, platformBody;
+    let isLanded             = false;
+    let isSimulationRunning  = true;
+    let currentWindForce     = 0;
+    let platformTiltAngle    = 0;
+    let currentDashOffset    = 0;
+    let currentSpinAngle     = 0;
+    const SPIN_SPEED         = 0.3;
 
-    // Physics engine and bodies
-    let engine, world;
-    let drone, platform;
+    let backgroundBuffer, skyColorTop, skyColorBottom;
 
-    // Simulation state
-    let hasLanded       = false;
-    let simulationRunning = true;
-    let windForce        = 0;
-    let platformAngle    = 0;
-    let timeElapsed      = 0;
+    function initializeSimulation(sketch) {
+      physicsEngine = Engine.create();
+      physicsWorld  = physicsEngine.world;
+      physicsWorld.gravity.y     = 0;
+      physicsWorld.gravity.x     = 0;
+      physicsWorld.gravity.scale = 0;
+      World.clear(physicsWorld, false);
 
-    // Graphics buffer for static background
-    let backgroundGraphics;
-    let skyTopColor, skyBottomColor;
+      const truckX    = sketch.width * TRUCK_X_FRACTION;
+      const platformY = sketch.height - ROAD_HEIGHT/2 - PLATFORM_HEIGHT/2;
 
-    /**
-     * Initialize or reset the simulation state and physics world.
-     * @param {object} p - p5 instance reference
-     */
-    function initSimulation(p) {
-      // Create physics engine
-      engine = Engine.create();
-      world  = engine.world;
-
-      // Set subtle gravity
-      world.gravity.y     = 1;
-      world.gravity.x     = 0;
-      world.gravity.scale = 0.001;
-
-      // Clear previous bodies if any
-      World.clear(world, false);
-
-      // Create dynamic drone and static platform bodies
-      drone = Bodies.rectangle(
-        p.width / 2,
-        100,
-        DRONE_WIDTH,
-        DRONE_HEIGHT,
+      // Drone
+      droneBody = Bodies.rectangle(
+        truckX, 100,
+        DRONE_WIDTH, DRONE_HEIGHT,
         { frictionAir: 0.05, density: 0.001, restitution: 0, friction: 0.1 }
       );
 
-      platform = Bodies.rectangle(
-        p.width / 2,
-        p.height * 0.8,
-        PLATFORM_WIDTH,
-        PLATFORM_HEIGHT,
+      // Static Platform
+      platformBody = Bodies.rectangle(
+        truckX, platformY,
+        PLATFORM_WIDTH, PLATFORM_HEIGHT,
         { isStatic: true, friction: 0.8, restitution: 0.1 }
       );
 
-      World.add(world, [drone, platform]);
+      World.add(physicsWorld, [droneBody, platformBody]);
 
-      // Reset state variables
-      hasLanded        = false;
-      simulationRunning = true;
-      timeElapsed      = 0;
+      isLanded            = false;
+      isSimulationRunning = true;
+      currentDashOffset   = 0;
+      currentSpinAngle    = 0;
     }
 
-    /**
-     * Draw the sky gradient and simple skyline once.
-     * @param {object} bg - p5 graphics buffer
-     * @param {object} p  - p5 instance reference
-     */
-    function drawBackground(bg, p) {
-      // Vertical gradient
-      for (let y = 0; y < p.height; y++) {
-        const t = y / p.height;
-        bg.stroke(p.lerpColor(skyTopColor, skyBottomColor, t));
-        bg.line(0, y, p.width, y);
+    function drawBackground(sketchGraphics, sketch) {
+      for (let y = 0; y < sketch.height; y++) {
+        const t = y / sketch.height;
+        sketchGraphics.stroke(sketch.lerpColor(skyColorTop, skyColorBottom, t));
+        sketchGraphics.line(0, y, sketch.width, y);
       }
-
-      // Simple skyline at bottom
-      bg.noStroke();
-      bg.fill(30);
-      let x = 0;
-      while (x < p.width) {
-        const w = 20 + Math.random() * 80;
-        const h = 50 + Math.random() * (p.height * 0.3);
-        bg.rect(x + w / 2, p.height - h / 2, w, h);
-        x += w + Math.random() * 20;
+      sketchGraphics.noStroke();
+      sketchGraphics.fill(255,255,255,200);
+      for (let i = 0; i < 8; i++) {
+        const cx = Math.random() * sketch.width;
+        const cy = Math.random() * sketch.height * 0.4;
+        const cw = 60 + Math.random()*80;
+        const ch = 20 + Math.random()*20;
+        sketchGraphics.ellipse(cx, cy, cw, ch);
+        sketchGraphics.ellipse(cx + cw*0.3, cy - ch*0.2, cw*0.6, ch*0.6);
+        sketchGraphics.ellipse(cx - cw*0.3, cy - ch*0.1, cw*0.5, ch*0.5);
       }
     }
 
-    /**
-     * Render the platform body.
-     * @param {object} p - p5 instance reference
-     */
-    function renderPlatform(p) {
-      p.push();
-      p.translate(platform.position.x, platform.position.y);
-      p.rotate(platformAngle);
-      p.fill(80);
-      p.noStroke();
-      p.rect(0, 0, PLATFORM_WIDTH, PLATFORM_HEIGHT);
-      
-      // Platform wheels
-      p.fill(50);
-      const wheelOffset = PLATFORM_WIDTH * 0.3;
-      p.ellipse(-wheelOffset, PLATFORM_HEIGHT / 2, 15, 15);
-      p.ellipse( wheelOffset, PLATFORM_HEIGHT / 2, 15, 15);
-      p.pop();
+    function renderRoad(sketch) {
+      const roadY = sketch.height - ROAD_HEIGHT/2;
+      sketch.fill(50);
+      sketch.noStroke();
+      sketch.rect(sketch.width/2, roadY, sketch.width, ROAD_HEIGHT);
+
+      sketch.fill(255);
+      let dashStart = -currentDashOffset;
+      while (dashStart < sketch.width) {
+        sketch.rect(dashStart + DASH_LENGTH/2, roadY, DASH_LENGTH, 4);
+        dashStart += DASH_LENGTH + DASH_GAP;
+      }
     }
 
-    /**
-     * Render the drone body.
-     * @param {object} p - p5 instance reference
-     */
-    function renderDrone(p) {
-      p.push();
-      p.translate(drone.position.x, drone.position.y);
-      p.rotate(drone.angle);
-      p.fill(255, 204, 0);
-      p.noStroke();
-      p.rect(0, 0, DRONE_WIDTH, DRONE_HEIGHT);
+    function renderTruckPlatform(sketch) {
+      const x = platformBody.position.x;
+      const y = platformBody.position.y;
 
-      // Drone rotors
-      p.fill(0);
-      const rotorOffset = DRONE_WIDTH / 2;
-      p.ellipse(-rotorOffset, 0, 8, 8);
-      p.ellipse( rotorOffset, 0, 8, 8);
-      p.pop();
+      // Apply tilt to platform body for later math
+      Body.setAngle(platformBody, platformTiltAngle);
+
+      // Chassis
+      sketch.push();
+      sketch.translate(x, y);
+      sketch.fill(80);
+      sketch.noStroke();
+      sketch.rect(0, 0, PLATFORM_WIDTH, PLATFORM_HEIGHT);
+      sketch.pop();
+
+      // Tyres
+      const offsetX = PLATFORM_WIDTH*0.3;
+      const wheelY  = y + PLATFORM_HEIGHT/2 + WHEEL_DIAMETER/2;
+      [-offsetX, offsetX].forEach(sign => {
+        sketch.fill(0);
+        sketch.noStroke();
+        sketch.ellipse(x + sign, wheelY, WHEEL_DIAMETER, WHEEL_DIAMETER);
+        sketch.fill(150);
+        sketch.ellipse(x + sign, wheelY, WHEEL_DIAMETER*0.6, WHEEL_DIAMETER*0.6);
+      });
+
+      // Gridded bed
+      const bedWidth = PLATFORM_WIDTH*0.6;
+      sketch.push();
+      sketch.translate(x, y - PLATFORM_HEIGHT);
+      sketch.rotate(platformTiltAngle);
+      sketch.fill(100);
+      sketch.noStroke();
+      sketch.rect(0,0, bedWidth, PLATFORM_HEIGHT);
+      sketch.stroke(150);
+      sketch.strokeWeight(2);
+      for (let i=1; i<6; i++){
+        let lineX = -bedWidth/2 + (bedWidth/6)*i;
+        sketch.line(lineX, -PLATFORM_HEIGHT/2, lineX, PLATFORM_HEIGHT/2);
+      }
+      sketch.pop();
+
+      // Cargo box (right)
+      sketch.fill(255,204,0);
+      sketch.rect(x + PLATFORM_WIDTH/2 - 15, y - PLATFORM_HEIGHT - 10, 30,20);
+
+      // Loading deck (left)
+      sketch.fill(120);
+      sketch.rect(x - PLATFORM_WIDTH/2 + 15, y + PLATFORM_HEIGHT/2 + 3, 30,6);
     }
 
-    /**
-     * Main p5 sketch function
-     */
-    const sketch = p => {
-      p.setup = () => {
-        p.createCanvas(p.windowWidth, p.windowHeight);
-        p.rectMode(p.CENTER);
-        p.angleMode(p.RADIANS);
+    function renderDrone(sketch) {
+      const x      = droneBody.position.x;
+      const y      = droneBody.position.y;
+      const angle  = droneBody.angle;
+      const offset = DRONE_WIDTH/2;
 
-        // Initialize simulation and background
-        initSimulation(p);
-        skyTopColor    = p.color(135, 206, 235);
-        skyBottomColor = p.color(250, 222, 156);
-        backgroundGraphics = p.createGraphics(p.width, p.height);
-        drawBackground(backgroundGraphics, p);
+      sketch.push();
+      sketch.translate(x,y);
+      sketch.rotate(angle);
+
+      // Body
+      sketch.fill(255,204,0);
+      sketch.noStroke();
+      sketch.rect(0,0, DRONE_WIDTH, DRONE_HEIGHT);
+
+      // Rotors
+      [-offset, offset].forEach(hubX => {
+        sketch.fill(0);
+        sketch.ellipse(hubX,0,8,8);
+        sketch.push();
+        sketch.translate(hubX,0);
+        sketch.stroke(0); sketch.strokeWeight(2);
+        sketch.rotate(currentSpinAngle);
+        sketch.line(-10,0,10,0);
+        sketch.rotate(Math.PI/2);
+        sketch.line(-10,0,10,0);
+        sketch.pop();
+        sketch.noStroke();
+      });
+
+      sketch.pop();
+    }
+
+    // ----- p5 Sketch -----
+    const sketch = s => {
+      s.setup = () => {
+        s.createCanvas(s.windowWidth, s.windowHeight);
+        s.rectMode(s.CENTER);
+        s.angleMode(s.RADIANS);
+
+        skyColorTop       = s.color(135,206,235);
+        skyColorBottom    = s.color(250,222,156);
+        backgroundBuffer  = s.createGraphics(s.width, s.height);
+        drawBackground(backgroundBuffer, s);
+
+        initializeSimulation(s);
       };
 
-      p.windowResized = () => {
-        p.resizeCanvas(p.windowWidth, p.windowHeight);
-        backgroundGraphics = p.createGraphics(p.width, p.height);
-        drawBackground(backgroundGraphics, p);
-
-        // Re-center platform on resize
-        Body.setPosition(platform, { x: p.width / 2, y: platform.position.y });
+      s.windowResized = () => {
+        s.resizeCanvas(s.windowWidth, s.windowHeight);
+        backgroundBuffer = s.createGraphics(s.width, s.height);
+        drawBackground(backgroundBuffer, s);
+        const newY = s.height - ROAD_HEIGHT/2 - PLATFORM_HEIGHT/2;
+        Body.setPosition(platformBody, { x:platformBody.position.x, y:newY });
       };
 
-      p.draw = () => {
-        // Update physics if running
-        if (simulationRunning) {
-          Engine.update(engine, p.deltaTime);
-        }
+      s.draw = () => {
+        const dt = s.deltaTime/1000;
+        if (isSimulationRunning) {
+          Engine.update(physicsEngine, s.deltaTime);
+          currentDashOffset = (currentDashOffset + ROAD_SCROLL_SPEED*dt) % (DASH_LENGTH+DASH_GAP);
+          if (!isLanded) currentSpinAngle += SPIN_SPEED;
 
-        // Oscillate platform horizontally and apply tilt
-        timeElapsed += p.deltaTime / 1000;
-        const omega = (2 * Math.PI) / PLATFORM_OSC_PERIOD;
-        const baseX = p.width / 2;
-        const amplitude = p.width / 3;
-        Body.setPosition(platform, {
-          x: baseX + amplitude * Math.sin(omega * timeElapsed),
-          y: platform.position.y
-        });
-        Body.setAngle(platform, platformAngle);
+          // Wind force
+          Body.applyForce(droneBody, droneBody.position, { x:currentWindForce, y:0 });
+          // Drag
+          const vel = droneBody.velocity;
+          Body.applyForce(droneBody, droneBody.position, {
+            x: -DRAG_COEFFICIENT*vel.x*Math.abs(vel.x),
+            y: -DRAG_COEFFICIENT*vel.y*Math.abs(vel.y)
+          });
 
-        // Desired landing Y-coordinate
-        const landingY = platform.position.y - (PLATFORM_HEIGHT / 2 + DRONE_HEIGHT / 2);
-
-        if (!hasLanded && simulationRunning) {
-          // Compute position errors
-          const errorX = platform.position.x - drone.position.x;
-          const errorY = landingY - drone.position.y;
-
-          // Proportional velocity commands
-          let vx = KV_HORIZ * errorX + windForce;
-          let vy = KV_VERT  * errorY;
-
-          // Clamp speeds
-          vx = Math.sign(vx) * Math.min(MAX_SPEED_X, Math.abs(vx));
-          vy = Math.sign(vy) * Math.min(MAX_SPEED_Y, Math.abs(vy));
-          Body.setVelocity(drone, { x: vx, y: vy });
-
-          // Check for touchdown within thresholds
-          const threshX = (PLATFORM_WIDTH - DRONE_WIDTH) / 2;
-          const threshY = 2;
-          if (Math.abs(errorX) <= threshX && Math.abs(errorY) <= threshY) {
-            hasLanded = true;
-            Body.setStatic(drone, true);
-            Body.setPosition(drone, { x: platform.position.x, y: landingY });
-            Body.setAngle(drone, platformAngle);
+          // User thrust
+          if (!isLanded) {
+            if (s.keyIsDown(s.LEFT_ARROW ))  Body.applyForce(droneBody, droneBody.position, { x:-USER_THRUST, y:0 });
+            if (s.keyIsDown(s.RIGHT_ARROW))  Body.applyForce(droneBody, droneBody.position, { x: USER_THRUST, y:0 });
+            if (s.keyIsDown(s.UP_ARROW   ))  Body.applyForce(droneBody, droneBody.position, { x:0, y:-USER_THRUST });
+            if (s.keyIsDown(s.DOWN_ARROW ))  Body.applyForce(droneBody, droneBody.position, { x:0, y: USER_THRUST });
           }
-        } else if (hasLanded) {
-          // Lock drone position on landed platform
-          Body.setPosition(drone, { x: platform.position.x, y: landingY });
-          Body.setAngle(drone, platformAngle);
+
+          // Landing & attach to tilted platform
+          const sumOffset = PLATFORM_HEIGHT/2 + DRONE_HEIGHT/2 + LANDING_GAP;
+          const landingY  = platformBody.position.y - sumOffset;
+          const dxError   = Math.abs(droneBody.position.x - platformBody.position.x);
+
+          if (!isLanded
+              && droneBody.position.y >= landingY
+              && dxError <= (PLATFORM_WIDTH*0.6)/2
+              && Math.hypot(vel.x, vel.y) < 0.5) {
+            isLanded = true;
+            Body.setStatic(droneBody, true);
+          }
+          // If landed, update drone position & angle with platform tilt
+          if (isLanded) {
+            const cosA = Math.cos(platformTiltAngle);
+            const sinA = Math.sin(platformTiltAngle);
+            const worldX = platformBody.position.x + sinA * sumOffset;
+            const worldY = platformBody.position.y - cosA * sumOffset;
+            Body.setPosition(droneBody, { x: worldX, y: worldY });
+            Body.setAngle(droneBody, platformTiltAngle);
+          }
         }
 
-        // Render scene
-        p.image(backgroundGraphics, 0, 0);
-        renderPlatform(p);
-        renderDrone(p);
+        // Draw scene
+        s.image(backgroundBuffer,0,0);
+        renderRoad(s);
+        renderTruckPlatform(s);
+        renderDrone(s);
+
+        // Instructions (below controls)
+        s.fill(0);
+        s.textSize(16);
+        s.textAlign(s.LEFT, s.TOP);
+        s.text('Arrow keys: fly drone', 10, 140);
+        s.text('Sliders: wind & tilt', 10, 160);
+
+        // Success message
+        if (isLanded) {
+          s.fill(0,200,0);
+          s.textSize(24);
+          s.textAlign(s.CENTER, s.CENTER);
+          s.text('Success! Drone landed.', s.width/2, s.height/2);
+        }
       };
     };
 
-    // Initialize p5 instance
-    const p5Instance = new p5(sketch);
+    window.p5Instance = new p5(sketch);
 
-    // ----- UI Controls -----
-    const startBtn   = document.getElementById('startBtn');
-    const stopBtn    = document.getElementById('stopBtn');
-    const resetBtn   = document.getElementById('resetBtn');
-    const windSlider = document.getElementById('windSlider');
-    const tiltSlider = document.getElementById('tiltSlider');
-    const windValue  = document.getElementById('windValue');
-    const tiltValue  = document.getElementById('tiltValue');
-
-    startBtn.addEventListener('click', () => simulationRunning = true);
-    stopBtn.addEventListener ('click', () => simulationRunning = false);
-    resetBtn.addEventListener('click', () => {
-      initSimulation(p5Instance);
-      windSlider.value = 0;
-      tiltSlider.value = 0;
-      windForce        = 0;
-      platformAngle    = 0;
-      windValue.textContent = '0';
-      tiltValue.textContent = '0°';
+    // ----- UI Hooks -----
+    document.getElementById('startBtn').addEventListener('click', () => {
+      isSimulationRunning = true;
     });
-
-    windSlider.addEventListener('input', event => {
-      const value = Number(event.target.value);
-      windForce = value * 0.00002;
-      windValue.textContent = value;
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      isSimulationRunning = false;
     });
-
-    tiltSlider.addEventListener('input', event => {
-      const deg = Number(event.target.value);
-      platformAngle = (deg * Math.PI) / 180;
-      tiltValue.textContent = `${deg}°`;
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      initializeSimulation(window.p5Instance);
+      document.getElementById('windSlider').value = 0;
+      document.getElementById('tiltSlider').value = 0;
+      currentWindForce  = 0;
+      platformTiltAngle = 0;
+      document.getElementById('windValue').textContent = '0';
+      document.getElementById('tiltValue').textContent = '0°';
+    });
+    document.getElementById('windSlider').addEventListener('input', e => {
+      currentWindForce = Number(e.target.value) * 0.00002;
+      document.getElementById('windValue').textContent = e.target.value;
+    });
+    document.getElementById('tiltSlider').addEventListener('input', e => {
+      platformTiltAngle = Number(e.target.value) * Math.PI/180;
+      document.getElementById('tiltValue').textContent = `${e.target.value}°`;
     });
   </script>
 </body>
