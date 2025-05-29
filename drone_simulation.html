@@ -3,54 +3,170 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Quadcopter Landing Simulation</title>
+  <title>Quadcopter Landing Simulation (Realistic)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --primary: #2176FF;
+      --success: #19cb61;
+      --danger: #ff4156;
+      --background: #f5f8fa;
+      --surface: #fff;
+      --text: #24292f;
+      --shadow: 0 2px 10px rgba(33, 34, 90, 0.10);
+      --border: #e3e8ee;
+    }
     html, body {
       margin: 0; padding: 0; overflow: hidden;
-      background: #87ceeb; font-family: sans-serif;
+      height: 100%; width: 100vw; background: var(--background);
+      font-family: 'Roboto', Arial, sans-serif; color: var(--text);
     }
-    canvas { display: block; }
-    button, input[type=range], .label {
-      position: absolute; z-index: 20;
+    body {
+      display: flex; flex-direction: row; height: 100vh;
     }
-    button { top: 10px; padding: 6px 12px; font-size: 14px; cursor: pointer; }
-    #startBtn { left: 10px; }
-    #stopBtn  { left: 90px; }
-    #resetBtn { left: 170px; }
-    #windSlider { top: 50px; left: 60px; width:160px; }
-    #tiltSlider{ top: 90px; left: 140px; width:160px; }
-    .label {
-      color: #fff; background: rgba(0,0,0,0.5);
-      padding: 2px 6px; font-size: 14px; border-radius: 4px;
+    #sidebar {
+      width: 340px; min-width: 280px; max-width: 400px; height: 100vh;
+      background: linear-gradient(135deg, #e8f0ff 70%, #ffffff 100%);
+      box-shadow: 2px 0 12px #aec8ed38;
+      z-index: 100; display: flex; flex-direction: column;
+      padding: 0 24px; border-right: 1px solid var(--border);
+      position: relative;
     }
-    #windLabel{ top:50px; left:10px; }
-    #windValue{ top:50px; left:230px; }
-    #tiltLabel{ top:90px; left:10px; }
-    #tiltValue{ top:90px; left:310px; }
+    #sidebar h1 {
+      font-size: 1.8rem; color: var(--primary); margin: 32px 0 8px 0;
+      font-weight: 700; text-shadow: 1px 2px 4px #d4e2f8;
+      letter-spacing: -1.5px;
+    }
+    #sidebar .section {
+      margin-bottom: 22px;
+    }
+    #sidebar .label {
+      font-size: 1rem; color: #6d8abe;
+      margin-bottom: 3px; margin-top: 14px;
+      display: block; font-weight: 500;
+    }
+    #sidebar input[type=range] {
+      width: 190px; accent-color: var(--primary);
+      margin: 0 10px 0 0;
+    }
+    #sidebar .slider-row {
+      display: flex; align-items: center; margin-bottom: 7px;
+    }
+    #sidebar .value-label {
+      font-weight: 700; font-size: 1.1em; margin-left: 7px;
+      color: var(--primary);
+      min-width: 36px; display: inline-block;
+    }
+    #sidebar button {
+      font-size: 1.03em; padding: 8px 22px;
+      background: var(--primary); color: #fff; border: none;
+      border-radius: 6px; box-shadow: var(--shadow);
+      margin-right: 10px; margin-bottom: 10px; cursor: pointer;
+      transition: background .16s, transform .12s;
+      font-weight: 700; letter-spacing: 0.5px;
+    }
+    #sidebar button:hover:not(:disabled) {
+      background: #1457b2; transform: translateY(-2px) scale(1.04);
+    }
+    #sidebar button:disabled {
+      background: #aacaf7; cursor: not-allowed;
+    }
+    #instructions {
+      background: #eef4fd; border-radius: 8px; padding: 12px 15px;
+      font-size: 1.02em; color: #52627a; margin-bottom: 6px;
+      box-shadow: 0 2px 8px #e1e7f5a9;
+      line-height: 1.52;
+    }
+    #telemetry {
+      background: #f8fbff; border-radius: 10px;
+      padding: 12px 16px; box-shadow: 0 2px 8px #e1e7f5b7;
+      font-size: 1.04em; color: #222; margin-bottom: 8px;
+    }
+    #telemetry .t-label { color: #6e82a1; font-weight: 500; }
+    #telemetry .t-value { float: right; font-weight: 700; color: var(--primary);}
+    #statusMsg {
+      font-weight: 700; font-size: 1.28em;
+      margin-top: 18px;
+      border-radius: 7px; padding: 7px 14px;
+      box-shadow: 0 2px 8px #e1e7f5b7;
+      display: inline-block;
+      text-align: center;
+    }
+    #statusMsg.success { background: #d6ffe6; color: var(--success); }
+    #statusMsg.crash { background: #ffe5e8; color: var(--danger);}
+    #statusMsg.flying { background: #e7f1ff; color: var(--primary);}
+    #canvas-container {
+      flex: 1 1 0; height: 100vh; position: relative; overflow: hidden;
+      z-index: 1;
+    }
+    canvas {
+      display: block; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+      pointer-events: none; /* All interactions are on sidebar only */
+    }
+    @media (max-width: 600px) {
+      #sidebar { width: 98vw; max-width: 100vw; min-width: unset; padding: 0 8vw;}
+      #canvas-container { display: none; }
+      body { flex-direction: column; }
+    }
   </style>
   <script type="importmap">
-  {
-    "imports": {
-      "p5":       "https://cdn.skypack.dev/p5@1.4.0",
-      "matter-js":"https://cdn.skypack.dev/matter-js@0.18.0"
+    {
+      "imports": {
+        "p5":       "https://cdn.skypack.dev/p5@1.4.0",
+        "matter-js": "https://cdn.skypack.dev/matter-js@0.18.0"
+      }
     }
-  }
   </script>
 </head>
 <body>
-  <!-- UI Controls -->
-  <button id="startBtn">Start</button>
-  <button id="stopBtn">Stop</button>
-  <button id="resetBtn">Restart</button>
-  <span id="windLabel" class="label">Wind:</span>
-  <input type="range" id="windSlider" min="0" max="20" step="1" value="0">
-  <span id="windValue" class="label">0</span>
-  <span id="tiltLabel" class="label">Platform Tilt:</span>
-  <input type="range" id="tiltSlider" min="-30" max="0" step="1" value="0">
-  <span id="tiltValue" class="label">0°</span>
-
+  <div id="sidebar">
+    <h1>Drone Landing Sim</h1>
+    <div class="section" id="instructions">
+      <div><b>Instructions:</b></div>
+      <ul style="margin: 8px 0 0 12px; padding-left: 12px; font-size: 1em;">
+        <li>Use <b>Arrow keys</b> to control the drone.</li>
+        <li>Land on the <b>tilted platform</b> safely.</li>
+        <li>Avoid crashing or flying off the screen!</li>
+        <li>Adjust <b>wind</b> and <b>platform tilt</b> with sliders.</li>
+      </ul>
+    </div>
+    <div class="section">
+      <span class="label">Wind:</span>
+      <div class="slider-row">
+        <input type="range" id="windSlider" min="0" max="20" step="1" value="0">
+        <span class="value-label" id="windValue">0</span>
+      </div>
+      <span class="label">Platform Tilt:</span>
+      <div class="slider-row">
+        <input type="range" id="tiltSlider" min="-30" max="0" step="1" value="0">
+        <span class="value-label" id="tiltValue">0°</span>
+      </div>
+    </div>
+    <div class="section">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn">Stop</button>
+      <button id="resetBtn">Restart</button>
+    </div>
+    <div class="section" id="telemetry">
+      <div><span class="t-label">Vertical Speed:</span>
+        <span class="t-value" id="telemetry-vspeed">0.00</span></div>
+      <div><span class="t-label">Tilt:</span>
+        <span class="t-value" id="telemetry-tilt">0°</span></div>
+      <div><span class="t-label">Wind:</span>
+        <span class="t-value" id="telemetry-wind">0</span></div>
+      <div><span class="t-label">Status:</span>
+        <span class="t-value" id="telemetry-status">Flying</span></div>
+    </div>
+    <div id="statusMsg" class="flying"></div>
+    <div style="flex:1"></div>
+    <div style="font-size: 12px; color: #9db5c7; text-align:center; margin-bottom:15px;">
+      &copy; 2025 Drone Sim &mdash; Made with <span style="color:#e25555;">&#9829;</span>
+    </div>
+  </div>
+  <div id="canvas-container"></div>
   <script type="module">
-    // === External libraries ===
     import p5 from 'p5';
     import Matter from 'matter-js';
     const { Engine, World, Bodies, Body, Events } = Matter;
@@ -66,12 +182,14 @@
     const DASH_LENGTH         = 40;
     const DASH_GAP            = 30;
     const ROAD_SCROLL_SPEED   = 200;
-    const DRONE_THRUST        = 0.0005;
+    const DRONE_THRUST        = 0.0008;
     const AIR_DRAG_COEF       = 0.00002;
     const CRASH_VELOCITY_LIM  = 1.0;
     const PROPELLER_SPIN_SPEED= 0.3;
-    const LANDING_LEEWAY      = 25; // Max normal distance to platform for landing
-    const HORIZONTAL_LEEWAY   = 100; // Extra leeway for platform landing width
+    const LANDING_LEEWAY      = 25;
+    const HORIZONTAL_LEEWAY   = 100;
+    const DRONE_TILT_MAX      = Math.PI/8;
+    const FIRE_PARTICLES      = 30;
 
     // === Simulation State Variables ===
     let physicsEngine, physicsWorld;
@@ -81,6 +199,40 @@
     let windHorizontalForce = 0, platformTiltAngle = 0;
     let roadDashOffset = 0, propellerSpinAngle = 0;
     let backgroundCanvas, skyGradientTop, skyGradientBottom;
+    let crashFireParticles = [];
+
+    // --- Utility for fire effect ---
+    class FireParticle {
+      constructor(x, y) {
+        this.x = x + (Math.random() - 0.5) * 10;
+        this.y = y + (Math.random() - 0.5) * 6;
+        this.vx = (Math.random() - 0.5) * 2.8;
+        this.vy = -Math.random() * 2 - 1.1;
+        this.life = Math.random() * 0.6 + 0.7;
+        this.age = 0;
+        this.size = Math.random() * 7 + 8;
+        this.color = [
+          [255,180,54,230],
+          [255,82,32,230],
+          [241,44,24,220],
+          [255,255,74,190],
+          [190,210,210,150]
+        ][Math.floor(Math.random()*5)];
+      }
+      update(dt) {
+        this.x += this.vx * dt * 50;
+        this.y += this.vy * dt * 40;
+        this.vy += 0.12 * dt * 28; // gravity
+        this.age += dt;
+      }
+      draw(p) {
+        let t = 1-Math.min(1, this.age/this.life);
+        p.noStroke();
+        p.fill(...this.color.map((v,i)=>i===3?v*t:v));
+        p.ellipse(this.x, this.y, this.size * t, this.size * t);
+      }
+      isAlive() { return this.age < this.life; }
+    }
 
     /**
      * Initializes and resets the simulation state and physics world.
@@ -90,10 +242,10 @@
       physicsEngine = Engine.create();
       physicsWorld  = physicsEngine.world;
       physicsWorld.gravity.x = 0;
-      physicsWorld.gravity.y = 0;
+      physicsWorld.gravity.y = 1;
       World.clear(physicsWorld, false);
 
-      const truckBaseX = p.width * 0.3;
+      const truckBaseX = p.width * 0.35;
       const roadY      = p.height - ROAD_HEIGHT / 2;
 
       // --- Drone Body ---
@@ -130,6 +282,7 @@
       droneHasLanded = droneHasCrashed = false;
       simulationIsRunning = true;
       roadDashOffset = propellerSpinAngle = 0;
+      crashFireParticles = [];
 
       // --- Collision Handler ---
       Events.on(physicsEngine, 'collisionStart', event => {
@@ -151,26 +304,24 @@
       });
     }
 
-    /**
-     * Mark the drone as crashed and stop simulation.
-     */
+    /** Mark the drone as crashed and stop simulation, spawn fire */
     function markDroneCrash() {
       droneHasCrashed = true;
       simulationIsRunning = false;
+      spawnCrashFire();
     }
 
-    /**
-     * Mark the drone as landed and perform landing logic.
-     */
-    function markDroneLanded() {
-      droneHasLanded = true;
+    /** Mark the drone as landed and perform landing logic. */
+    function markDroneLanded() { droneHasLanded = true; }
+
+    /** Spawns fire particles at the drone's current location. */
+    function spawnCrashFire() {
+      crashFireParticles = [];
+      let { x, y } = droneBody.position;
+      for (let i=0; i<FIRE_PARTICLES; ++i)
+        crashFireParticles.push(new FireParticle(x, y));
     }
 
-    /**
-     * Render a vertical gradient sky and clouds as a background.
-     * @param {p5.Graphics} bg - Graphics buffer.
-     * @param {p5} p - p5 instance.
-     */
     function drawSkyAndClouds(bg, p) {
       for (let y = 0; y < p.height; y++) {
         const interp = y / p.height;
@@ -206,7 +357,7 @@
     }
 
     /**
-     * Renders the truck (wheels, chassis, tilting platform, and cabin).
+     * Renders the truck, including heels chassis, tilting platform, and cabin)
      * @param {p5} p - p5 instance.
      */
     function drawTruck(p) {
@@ -231,7 +382,7 @@
       p.rect(0, 0, PLATFORM_WIDTH, TRUCK_CHASSIS_HEIGHT);
       p.pop();
 
-      // Draw tilting platform (truck bed)
+      // Draw a tilting platform (truck bed)
       p.push();
       p.translate(platformPivotX, platformPivotY);
       p.rotate(platformTiltAngle);
@@ -244,7 +395,7 @@
       }
       p.pop();
 
-      // Draw cabin
+      // Draw a cabin
       p.fill(255,204,0);
       p.rect(truckCabinBody.position.x, truckCabinBody.position.y, 90, 60);
 
@@ -258,35 +409,71 @@
      */
     function drawDrone(p) {
       const {x, y} = droneBody.position, angle = droneBody.angle;
+
+      // --- Calculate roll/tilt effect based on velocity ---
+      let vx = droneBody.velocity.x;
+      let roll = Math.max(-DRONE_TILT_MAX, Math.min(DRONE_TILT_MAX, vx * 1.2)); // scale factor, limit max
+      let effectiveAngle = angle + roll;
+
       const halfWidth = DRONE_WIDTH / 2;
       p.push();
       p.translate(x, y);
-      p.rotate(angle);
+      p.rotate(effectiveAngle);
       p.fill(255,204,0).noStroke();
-      p.rect(0, 0, DRONE_WIDTH, DRONE_HEIGHT);
+      p.rect(0, 0, DRONE_WIDTH, DRONE_HEIGHT, 7);
+
+      // Draw shadow (ellipse)
+      if (!droneHasCrashed && !droneHasLanded) {
+        p.push();
+        p.noStroke();
+        p.fill(60,80,80,60);
+        p.ellipse(0, 15, DRONE_WIDTH*1.4, DRONE_HEIGHT*1.1);
+        p.pop();
+      }
 
       // Draw propellers
       [-halfWidth, halfWidth].forEach(propellerX => {
-        p.fill(0).ellipse(propellerX, 0, 8);
+        p.fill(0).ellipse(propellerX, 0, 10);
         p.push();
         p.translate(propellerX, 0);
         p.stroke(0).strokeWeight(2);
         if (!droneHasLanded && !droneHasCrashed) p.rotate(propellerSpinAngle);
-        p.line(-10,0,10,0);
+        p.line(-12,0,12,0);
         p.rotate(Math.PI/2);
-        p.line(-10,0,10,0);
+        p.line(-12,0,12,0);
         p.pop();
         p.noStroke();
       });
       p.pop();
     }
 
-    /**
-     * Main sketch for p5.js simulation and rendering.
-     */
+    // Draw crash fire and sparks
+    function drawCrashFire(p) {
+      for (let particle of crashFireParticles) {
+        particle.draw(p);
+      }
+    }
+
+    // --- UI/Telemetry update ---
+    function updateSidebarTelemetry(vspeed, tilt, wind, status) {
+      document.getElementById('telemetry-vspeed').textContent = vspeed.toFixed(2);
+      document.getElementById('telemetry-tilt').textContent = tilt;
+      document.getElementById('telemetry-wind').textContent = wind;
+      document.getElementById('telemetry-status').textContent = status;
+      let msg = document.getElementById('statusMsg');
+      msg.className = "";
+      if(status === "Crashed") msg.classList.add("crash"), msg.textContent="Crash! Drone destroyed.";
+      else if(status === "Landed") msg.classList.add("success"), msg.textContent="Success! Drone landed.";
+      else msg.classList.add("flying"), msg.textContent="Flying...";
+    }
+
+    // --- Main p5 sketch ---
     const simulationSketch = p => {
       p.setup = () => {
-        p.createCanvas(p.windowWidth, p.windowHeight);
+        let w = window.innerWidth - document.getElementById('sidebar').offsetWidth;
+        let h = window.innerHeight;
+        let c = p.createCanvas(w, h);
+        c.parent("canvas-container");
         p.rectMode(p.CENTER);
         p.angleMode(p.RADIANS);
         skyGradientTop     = p.color(135,206,235);
@@ -297,7 +484,9 @@
       };
 
       p.windowResized = () => {
-        p.resizeCanvas(p.windowWidth, p.windowHeight);
+        let w = window.innerWidth - document.getElementById('sidebar').offsetWidth;
+        let h = window.innerHeight;
+        p.resizeCanvas(w, h);
         backgroundCanvas = p.createGraphics(p.width,p.height);
         drawSkyAndClouds(backgroundCanvas, p);
         initializeSimulation(p);
@@ -325,6 +514,13 @@
             if (p.keyIsDown(p.RIGHT_ARROW)) Body.applyForce(droneBody, droneBody.position, { x:  DRONE_THRUST, y: 0 });
             if (p.keyIsDown(p.UP_ARROW))    Body.applyForce(droneBody, droneBody.position, { x: 0, y: -DRONE_THRUST });
             if (p.keyIsDown(p.DOWN_ARROW))  Body.applyForce(droneBody, droneBody.position, { x: 0, y:  DRONE_THRUST });
+          }
+        }
+
+        // --- Crash on hitting top of the screen ---
+        if (!droneHasLanded && !droneHasCrashed) {
+          if (droneBody.position.y < 0) {
+            markDroneCrash();
           }
         }
 
@@ -362,49 +558,39 @@
         }
 
         // --- Rendering ---
+        p.clear();
         p.image(backgroundCanvas, 0, 0);
 
-        // --- Instructions ---
-        p.fill(255).textSize(16).textAlign(p.CENTER, p.TOP);
-        p.text("Use arrow keys to fly the drone", p.width/2, 10);
-
-        // --- Scene objects ---
         drawRoad(p);
         drawTruck(p);
         drawDrone(p);
 
-        // --- Telemetry ---
-        p.fill(0).textSize(14).textAlign(p.LEFT, p.BOTTOM);
-        const verticalVelocity = droneBody.velocity.y.toFixed(2);
-        const platformAngleDeg = (platformTiltAngle * 180 / Math.PI).toFixed(1) + '°';
-        const windDisplay      = windHorizontalForce.toExponential(2);
-        const status = droneHasCrashed ? 'Crashed' : droneHasLanded ? 'Landed' : 'Flying';
-        p.text(`V Speed: ${verticalVelocity}`, 10, p.height-60);
-        p.text(`Tilt: ${platformAngleDeg}`, 10, p.height-40);
-        p.text(`Wind: ${windDisplay}`, 10, p.height-20);
-        p.text(`Status: ${status}`, p.width-120, 20);
+        // --- Crash, fire, and sparks
+        if (droneHasCrashed) {
+          crashFireParticles.forEach(f => f.update(deltaTimeSec));
+          crashFireParticles = crashFireParticles.filter(f => f.isAlive());
+          drawCrashFire(p);
+        }
 
-        // --- Landing and Crash Effects ---
+        // --- Telemetry / Status ---
+        const verticalVelocity = droneBody.velocity.y;
+        const platformAngleDeg = (platformTiltAngle * 180 / Math.PI).toFixed(1) + '°';
+        const windDisplay      = (windHorizontalForce / 0.00002).toFixed(0);
+        const status = droneHasCrashed ? 'Crashed' : droneHasLanded ? 'Landed' : 'Flying';
+
+        updateSidebarTelemetry(verticalVelocity, platformAngleDeg, windDisplay, status);
+
+        // --- Snap drone to rest on platform after landing ---
         if (droneHasLanded) {
-          p.fill(0,200,0).textSize(24).textAlign(p.CENTER, p.CENTER)
-            .text('Success! Drone landed.', p.width/2, p.height/2);
-          // Snap drone to rest on platform
           const ca = Math.cos(platformTiltAngle), sa = Math.sin(platformTiltAngle);
-          const platformTopX = platformBody.position.x - sa * (PLATFORM_HEIGHT / 2);
           const platformTopY = platformBody.position.y - ca * (PLATFORM_HEIGHT / 2);
-          const droneRestAngle = platformTiltAngle;
-          const offsetX = 0 * Math.cos(droneRestAngle) - (DRONE_HEIGHT/2) * Math.sin(droneRestAngle);
-          const offsetY = 0 * Math.sin(droneRestAngle) + (DRONE_HEIGHT/2) * Math.cos(droneRestAngle);
           Body.setPosition(droneBody, {
             x: droneBody.position.x,
-            y: platformTopY - offsetY - 20
+            y: platformTopY - 20
           });
           Body.setAngle(droneBody, platformTiltAngle);
           Body.setVelocity(droneBody, { x: 0, y: 0 });
           Body.setAngularVelocity(droneBody, 0);
-        } else if (droneHasCrashed) {
-          p.fill(200,50,50).textSize(24).textAlign(p.CENTER,p.CENTER)
-           .text('Crash!', p.width/2, p.height/2);
         }
       };
     };
@@ -432,6 +618,9 @@
       platformTiltAngle = degrees * Math.PI / 180;
       document.getElementById('tiltValue').textContent = `${degrees}°`;
     };
+
+    // --- Initial Telemetry UI Update
+    document.getElementById('statusMsg').textContent = "Flying...";
   </script>
 </body>
 </html>
