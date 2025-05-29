@@ -26,164 +26,194 @@
       let physicsEngine;
       let physicsWorld;
 
-      // Collections for static rocks and dynamic water particles
+      // Collections for static rocks and dynamic water particles/pools
       const rockBodies = [];
-      const waterDrops = [];
+      const fallingDrops = [];
       const splashDrops = [];
+      const pooledDrops = [];
 
       // UI controls and state
       let waterFlowRate = 10;
       let flowRateSlider;
-      let currentlyDraggedRock = null;
+      let eddyStrength = 0.02;
+      let eddySlider;
+
+      // Perlin noise seed for eddies
+      let noiseSeedVal;
+      let draggedRock = null;
 
       /**
        * Initialize the Matter.js physics engine and world.
        */
-      function initializePhysicsScene() {
+      function initializePhysics() {
         physicsEngine = Matter.Engine.create();
         physicsWorld = physicsEngine.world;
+        noiseSeedVal = p5Canvas.random(1000);
       }
 
       /**
-       * Create static rock bodies at fixed coordinates.
+       * Generate irregular rock meshes in three tiers (tight cluster).
        */
-      function loadRockBodies() {
-        const predefinedPositions = [
-          { x: 200, y: 450 },
-          { x: 400, y: 400 },
-          { x: 600, y: 500 },
-          { x: 300, y: 350 },
-          { x: 500, y: 300 },
+      function loadIrregularRocks() {
+        const cx = p5Canvas.width / 2;
+        const tiers = [
+          { x: cx,      y: 320 },
+          { x: cx - 40, y: 380 },
+          { x: cx + 40, y: 380 },
+          { x: cx - 80, y: 440 },
+          { x: cx,      y: 480 },
+          { x: cx + 80, y: 440 }
         ];
 
-        predefinedPositions.forEach(position => {
-          const vertexCount = p5Canvas.floor(p5Canvas.random(5, 9));
-          const rockSize = p5Canvas.random(30, 60);
-          const rockBody = Matter.Bodies.polygon(
-            position.x,
-            position.y,
-            vertexCount,
-            rockSize,
-            { isStatic: true }
-          );
-          Matter.World.add(physicsWorld, rockBody);
-          rockBodies.push(rockBody);
+        tiers.forEach(({ x: centerX, y: centerY }) => {
+          const vertexCount = p5Canvas.floor(p5Canvas.random(6, 12));
+          const minR = 30, maxR = 60;
+          const verts = [];
+          for (let i = 0; i < vertexCount; i++) {
+            const angle = (Math.PI * 2 / vertexCount) * i;
+            const r = p5Canvas.random(minR, maxR);
+            verts.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
+          }
+          const rock = Matter.Bodies.fromVertices(centerX, centerY, [verts], { isStatic: true });
+          Matter.World.add(physicsWorld, rock);
+          rockBodies.push(rock);
         });
       }
 
       /**
        * Emit new water drops at the top center of the canvas.
        */
-      function emitWaterDrops() {
-        for (let emissionIndex = 0; emissionIndex < waterFlowRate; emissionIndex++) {
-          const dropRadius = p5Canvas.random(2, 4);
-          const initialX = p5Canvas.width / 2 + p5Canvas.random(-10, 10);
-          waterDrops.push(new WaterParticle(initialX, 0, dropRadius));
+      function spawnWaterDrops() {
+        for (let i = 0; i < waterFlowRate; i++) {
+          const r = p5Canvas.random(2, 4);
+          const startX = p5Canvas.width / 2 + p5Canvas.random(-10, 10);
+          fallingDrops.push(new WaterDrop(startX, 0, r));
         }
       }
 
       /**
-       * Represents a single water particle.
+       * Represents a single water particle with Perlin‐noise eddies and added swirl.
        */
-      class WaterParticle {
-        /**
-         * @param {number} x - Initial x position.
-         * @param {number} y - Initial y position.
-         * @param {number} radius - Particle radius.
-         */
+      class WaterDrop {
         constructor(x, y, radius) {
           this.x = x;
           this.y = y;
           this.radius = radius;
-          this.velocityX = p5Canvas.random(-1, 1);
-          this.velocityY = p5Canvas.random(0, 2);
+          this.vx = p5Canvas.random(-1, 1);
+          this.vy = p5Canvas.random(0, 2);
         }
 
-        /**
-         * Update particle position and velocity.
-         */
-        updatePosition() {
-          this.velocityY += 0.1; // gravity effect
-          this.x += this.velocityX;
-          this.y += this.velocityY;
+        update() {
+          this.vy += 0.1; // gravity
+          this.x += this.vx;
+          this.y += this.vy;
+
+          // Eddy + swirl around each rock
+          const eddyR = 80;
+          const noiseScale = 0.005;
+          rockBodies.forEach(rock => {
+            const dx = this.x - rock.position.x;
+            const dy = this.y - rock.position.y;
+            const d = Math.hypot(dx, dy);
+            if (d < eddyR) {
+              // radial angle from rock to drop
+              const baseAngle = Math.atan2(dy, dx);
+              // choose spin direction based on quadrant
+              const spinDir = (dx * dy > 0) ? 1 : -1;
+
+              // 1) Perlin‐noise jitter
+              const noiseAng = p5Canvas.noise(
+                (this.x + noiseSeedVal) * noiseScale,
+                (this.y + noiseSeedVal) * noiseScale
+              ) * Math.PI * 2;
+              const noiseStr = p5Canvas.map(d, 0, eddyR, 0.2, 0);
+
+              // 2) Tangential swirl component
+              const tanAngle = baseAngle + (Math.PI / 2) * spinDir;
+              const swirlStr = p5Canvas.map(d, 0, eddyR, eddyStrength, 0);
+
+              // apply both effects
+              this.vx += Math.cos(noiseAng) * noiseStr
+                       + Math.cos(tanAngle) * swirlStr;
+              this.vy += Math.sin(noiseAng) * noiseStr
+                       + Math.sin(tanAngle) * swirlStr;
+            }
+          });
         }
 
-        /**
-         * Draw the particle.
-         */
         draw() {
           p5Canvas.noStroke();
-          p5Canvas.fill(0, 0, 255, 150);
+          p5Canvas.fill(0, 100, 255, 180);
           p5Canvas.ellipse(this.x, this.y, this.radius * 2);
         }
 
-        /**
-         * Check if particle moved off-screen.
-         * @returns {boolean}
-         */
         isOffScreen() {
-          return (
-            this.y > p5Canvas.height ||
-            this.x < 0 ||
-            this.x > p5Canvas.width
-          );
+          return this.y > p5Canvas.height || this.x < 0 || this.x > p5Canvas.width;
         }
 
-        /**
-         * Check collision with a Matter.js body.
-         * @param {Matter.Body} body
-         * @returns {boolean}
-         */
-        collidesWithBody(body) {
-          return (
-            Matter.Query.point([body], { x: this.x, y: this.y }).length > 0
-          );
+        hitsRock(rock) {
+          return Matter.Query.point([rock], { x: this.x, y: this.y }).length > 0;
         }
       }
 
       /**
-       * Update and remove off-screen water and splash particles.
+       * Update all particles and handle pooling at rock surfaces & bottom.
        */
-      function updateParticleCollections() {
-        for (let dropIndex = waterDrops.length - 1; dropIndex >= 0; dropIndex--) {
-          const waterParticle = waterDrops[dropIndex];
-          waterParticle.updatePosition();
-          if (waterParticle.isOffScreen()) {
-            waterDrops.splice(dropIndex, 1);
+      function updateParticles() {
+        // falling drops
+        for (let i = fallingDrops.length - 1; i >= 0; i--) {
+          const d = fallingDrops[i];
+          d.update();
+
+          // bottom pooling
+          if (d.y > p5Canvas.height - 10 && Math.abs(d.vy) < 0.5) {
+            pooledDrops.push({ x: d.x, y: p5Canvas.height - 5, radius: d.radius });
+            fallingDrops.splice(i, 1);
+          }
+          // off-screen
+          else if (d.isOffScreen()) {
+            fallingDrops.splice(i, 1);
           }
         }
 
-        for (let splashIndex = splashDrops.length - 1; splashIndex >= 0; splashIndex--) {
-          const splashParticle = splashDrops[splashIndex];
-          splashParticle.updatePosition();
-          if (splashParticle.isOffScreen()) {
-            splashDrops.splice(splashIndex, 1);
+        // splash drops
+        for (let j = splashDrops.length - 1; j >= 0; j--) {
+          const s = splashDrops[j];
+          s.update();
+          if (s.isOffScreen()) {
+            splashDrops.splice(j, 1);
           }
         }
       }
 
       /**
-       * Detect collisions between water drops and rock bodies,
-       * convert impacts into splash particles.
+       * Detect collisions, spawn splashes or pool drops on rock surfaces.
        */
-      function handleParticleCollisions() {
-        const splashParticleCount = 5;
+      function detectCollisions() {
+        const splashCount = 7;
+        const poolThreshold = 1.0;
 
-        for (let dropIndex = waterDrops.length - 1; dropIndex >= 0; dropIndex--) {
-          const waterParticle = waterDrops[dropIndex];
-          for (const rockBody of rockBodies) {
-            if (waterParticle.collidesWithBody(rockBody)) {
-              for (let splashCount = 0; splashCount < splashParticleCount; splashCount++) {
-                const splashParticle = new WaterParticle(
-                  waterParticle.x,
-                  waterParticle.y,
-                  p5Canvas.random(1, 3)
-                );
-                splashParticle.velocityX = p5Canvas.random(-2, 2);
-                splashParticle.velocityY = p5Canvas.random(-2, 0);
-                splashDrops.push(splashParticle);
+        for (let i = fallingDrops.length - 1; i >= 0; i--) {
+          const d = fallingDrops[i];
+          for (const rock of rockBodies) {
+            if (d.hitsRock(rock)) {
+              if (Math.abs(d.vy) < poolThreshold) {
+                // pool on the rock surface
+                pooledDrops.push({
+                  x: d.x,
+                  y: rock.position.y - d.radius - 2,
+                  radius: d.radius
+                });
+              } else {
+                // generate splashes
+                for (let k = 0; k < splashCount; k++) {
+                  const s = new WaterDrop(d.x, d.y, p5Canvas.random(1, 3));
+                  s.vx = p5Canvas.random(-3, 3);
+                  s.vy = p5Canvas.random(-3, 0);
+                  splashDrops.push(s);
+                }
               }
-              waterDrops.splice(dropIndex, 1);
+              fallingDrops.splice(i, 1);
               break;
             }
           }
@@ -191,90 +221,132 @@
       }
 
       /**
-       * Render splash particles.
+       * Render pooled water as translucent ellipses.
        */
-      function renderSplashParticles() {
-        splashDrops.forEach(particle => particle.draw());
+      function renderPool() {
+        p5Canvas.noStroke();
+        p5Canvas.fill(0, 120, 255, 150);
+        pooledDrops.forEach(p => {
+          p5Canvas.ellipse(p.x, p.y, p.radius * 4, p.radius * 2);
+        });
       }
 
       /**
-       * Render static rock bodies.
+       * Draw static rocks.
        */
-      function renderRockBodies() {
-        p5Canvas.fill(100);
-        rockBodies.forEach(body => {
+      function renderRocks() {
+        p5Canvas.fill(80);
+        rockBodies.forEach(rock => {
           p5Canvas.beginShape();
-          body.vertices.forEach(vertex => p5Canvas.vertex(vertex.x, vertex.y));
+          rock.vertices.forEach(v => p5Canvas.vertex(v.x, v.y));
           p5Canvas.endShape(p5Canvas.CLOSE);
         });
       }
 
       /**
-       * Set up UI controls: slider for flow rate and drag-and-drop rocks.
+       * Set up flow‐rate & eddy strength sliders with labels, and rock drag/drop.
        */
-      function initializeControls() {
+      function setupControls() {
+        // Flow Rate label & slider
+        const flowLabel = p5Canvas.createSpan('Flow Rate');
+        flowLabel.position(10, 10);
         flowRateSlider = p5Canvas.createSlider(1, 50, waterFlowRate);
-        flowRateSlider.position(10, 10);
-        flowRateSlider.input(() => {
-          waterFlowRate = flowRateSlider.value();
-        });
+        flowRateSlider.position(100, 10);
+        flowRateSlider.input(() => waterFlowRate = flowRateSlider.value());
+
+        // Eddy Strength label & slider
+        const eddyLabel = p5Canvas.createSpan('Eddy Strength');
+        eddyLabel.position(10, 40);
+        eddySlider = p5Canvas.createSlider(0, 100, 20);
+        eddySlider.position(100, 40);
+        eddySlider.input(() => eddyStrength = eddySlider.value() / 1000);
 
         p5Canvas.mousePressed = () => {
-          for (const rockBody of rockBodies) {
-            const distanceToRock = p5Canvas.dist(
-              p5Canvas.mouseX,
-              p5Canvas.mouseY,
-              rockBody.position.x,
-              rockBody.position.y
-            );
-            if (distanceToRock < 60) {
-              currentlyDraggedRock = rockBody;
-              break;
-            }
-          }
+          rockBodies.forEach(r => {
+            const d = p5Canvas.dist(p5Canvas.mouseX, p5Canvas.mouseY, r.position.x, r.position.y);
+            if (d < 60) draggedRock = r;
+          });
         };
-
         p5Canvas.mouseDragged = () => {
-          if (currentlyDraggedRock) {
-            Matter.Body.setPosition(currentlyDraggedRock, {
+          if (draggedRock) {
+            Matter.Body.setPosition(draggedRock, {
               x: p5Canvas.mouseX,
               y: p5Canvas.mouseY
             });
           }
         };
-
-        p5Canvas.mouseReleased = () => {
-          currentlyDraggedRock = null;
-        };
+        p5Canvas.mouseReleased = () => { draggedRock = null; };
       }
 
       /**
-       * Main animation loop: update physics, particles, and draw all elements.
+       * Draw sky‐to‐ground gradient & land‐like bottom.
        */
-      function mainAnimationLoop() {
-        p5Canvas.background(220);
-        emitWaterDrops();
-        updateParticleCollections();
-        handleParticleCollisions();
-        renderRockBodies();
-        waterDrops.forEach(drop => drop.draw());
-        renderSplashParticles();
-
-        Matter.Engine.update(physicsEngine);
-        requestAnimationFrame(mainAnimationLoop);
+      function drawGradientBackground() {
+        const ctx = p5Canvas.drawingContext;
+        const skyTop = p5Canvas.color(135, 206, 235);
+        const skyBot = p5Canvas.color(255, 255, 255);
+        for (let y = 0; y <= p5Canvas.height; y++) {
+          const t = p5Canvas.map(y, 0, p5Canvas.height, 0, 1);
+          p5Canvas.stroke(p5Canvas.lerpColor(skyTop, skyBot, t));
+          p5Canvas.line(0, y, p5Canvas.width, y);
+        }
+        const groundY = p5Canvas.height * 0.6;
+        const grad = ctx.createLinearGradient(0, groundY, 0, p5Canvas.height);
+        grad.addColorStop(0, '#A67B5B');
+        grad.addColorStop(1, '#6B4423');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(0, groundY);
+        for (let x = 0; x <= p5Canvas.width; x += 10) {
+          const yOff = p5Canvas.noise(x * 0.01, p5Canvas.frameCount * 0.002) * 20;
+          ctx.lineTo(x, groundY + yOff);
+        }
+        ctx.lineTo(p5Canvas.width, p5Canvas.height);
+        ctx.lineTo(0, p5Canvas.height);
+        ctx.closePath();
+        ctx.fill();
+        p5Canvas.noStroke();
+        for (let i = 0; i < 100; i++) {
+          p5Canvas.fill(80, 50, 20, 50);
+          p5Canvas.ellipse(
+            p5Canvas.random(0, p5Canvas.width),
+            p5Canvas.random(groundY, p5Canvas.height),
+            p5Canvas.random(2, 5),
+            p5Canvas.random(2, 5)
+          );
+        }
       }
 
-      // p5.js setup function
+      /**
+       * Main animation loop.
+       */
+      function animate() {
+        drawGradientBackground();
+        spawnWaterDrops();
+        updateParticles();
+        detectCollisions();
+        renderRocks();
+        fallingDrops.forEach(d => d.draw());
+        splashDrops.forEach(d => d.draw());
+        renderPool();
+        Matter.Engine.update(physicsEngine);
+        requestAnimationFrame(animate);
+      }
+
+      // p5.js setup
       p5Canvas.setup = () => {
-        p5Canvas.createCanvas(800, 600);
-        initializePhysicsScene();
-        loadRockBodies();
-        initializeControls();
-        mainAnimationLoop();
+        p5Canvas.createCanvas(p5Canvas.windowWidth, 700);
+        initializePhysics();
+        loadIrregularRocks();
+        setupControls();
+        animate();
+      };
+
+      p5Canvas.windowResized = () => {
+        p5Canvas.resizeCanvas(p5Canvas.windowWidth, p5Canvas.windowHeight);
       };
     };
 
-    // Initialize the sketch
     new P5(sketch);
   </script>
 </body>
